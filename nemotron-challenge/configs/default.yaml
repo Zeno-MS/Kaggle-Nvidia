@@ -1,0 +1,71 @@
+# Nemotron Challenge — Default Configuration
+# 
+# All values marked [PHASE 0] are placeholders.
+# Update after benchmark and judge profiling.
+#
+# Usage: Config().load_yaml("configs/default.yaml")
+
+benchmark:
+  puzzle_format: "unknown"            # [PHASE 0] Update after seeing data
+  has_training_examples: true
+  num_examples_per_puzzle: 3
+  deterministic_answers: true
+
+judge:
+  model_id: "nemotron-3-nano-30b-a3b-bf16"
+  weight_correctness: 0.80
+  weight_helpfulness: 0.65
+  weight_complexity: 0.55
+  weight_coherence: 0.45
+  weight_verbosity: -0.40
+  eval_temperature: 1.0               # [PHASE 0] Check Kaggle eval page
+  eval_max_tokens: 4096               # [PHASE 0] Check Kaggle eval page
+  eval_top_p: 0.95                    # [PHASE 0] Check Kaggle eval page
+
+symbolic:
+  enabled: true
+  timeout_per_puzzle_sec: 30.0
+  max_program_depth: 5
+  max_candidates: 100
+  use_dsl_enumeration: true
+  use_llm_program_synthesis: true
+  use_ilp: false
+  synthesis_temperature: 0.8
+  synthesis_max_attempts: 10
+
+trace:
+  enabled: true
+  template_version: "v1"
+  generation_temperature: 0.7
+  max_trace_tokens: 512               # Keep concise (verbosity penalty)
+  num_trace_candidates: 3
+  max_derivation_steps: 7
+  min_derivation_steps: 3
+  include_verification: true
+  include_strategy_statement: true
+  match_nemotron_style: true
+  use_think_tags: true
+
+neural:
+  enabled: true
+  num_samples: 8
+  voting_method: "majority"
+  sampling_temperature: 0.8
+  reasoning_on: true
+  reasoning_budget: 2048
+  num_few_shot: 3
+  few_shot_source: "symbolic"
+  model_id: "nemotron-3-nano-30b-a3b-bf16"
+  quantization: "fp8"
+
+orchestrator:
+  symbolic_first: true
+  skip_trace_if_symbolic_fails: false
+  adaptive_sampling: true
+  easy_puzzle_samples: 2
+  hard_puzzle_samples: 16
+  difficulty_threshold: 0.5
+  total_time_budget_sec: 18000        # [PHASE 0] Check actual submission limit
+  time_per_puzzle_sec: 60.0           # [PHASE 0] = total / num_puzzles
+  verbose: true
+  log_per_puzzle: true
