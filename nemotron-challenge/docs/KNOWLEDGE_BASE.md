@@ -36,22 +36,53 @@
 - Difficulty distribution
 - Whether there's a public test set or only private
 
-### Phase 0 Findings
-*(Fill in as you investigate)*
+### Phase 0 Findings (2026-03-26)
 
-**Puzzle format**: [TBD]
-**Number of puzzles**: train=[TBD], test=[TBD]
-**Input representation**: [TBD]
-**Output representation**: [TBD]
-**Training examples per puzzle**: [TBD — yes/no, how many]
-**Puzzle families identified**:
-- Family 1: [TBD]
-- Family 2: [TBD]
-- ...
+**Puzzle format**: Text-based reasoning prompts in CSV (`prompt` column + `answer` column)
+**Number of puzzles**: train.csv=3MB (~large set), test.csv=1.4KB (~small hidden test)
+**Input representation**: Natural language prompts (reasoning-gym style)
+**Output representation**: Answers extracted from `\boxed{}` — numeric or string
+**Training examples per puzzle**: NO — each row is a standalone prompt/answer pair (not ARC-style few-shot)
+**Puzzle families identified** (inferred from Nemotron-RL-ReasoningGym-v1):
+- Algebra (linear equations, cryptarithmetic)
+- Arithmetic (chains, leg counting)
+- Logic (self-reference, needle-in-haystack, blicket)
+- Graph theory (shortest path, friends graph)
+- Games (Tower of Hanoi, Sokoban, Knight Swap)
+- Geometry (orthocenters, coordinates)
+- Computation (base conversion, bitwise ops, matrix)
+- Statistics/probability (dice, combinatorics)
+- Text/string (palindromes, synthesis rules)
 
-**Difficulty distribution**: [TBD]
-**Baseline Nano accuracy**: [TBD]
-**Key error patterns**: [TBD]
+**Train size**: 9,500 problems (3MB CSV)
+**Test size**: 3 problems (public test — real test is hidden/private)
+**Problem structure**: ALL problems follow "Alice's Wonderland" template:
+  description → few-shot examples → "Now, determine/convert/decrypt:" → query
+
+**6 categories, perfectly balanced (~16.5% each)**:
+
+| Category | Count | Symbolic Accuracy | Notes |
+|----------|-------|-------------------|-------|
+| bit_manipulation | 1,602 | 7.1% | Complex multi-op transforms, not simple XOR/rotate |
+| gravitational_constant | 1,597 | 97.9% | d = 0.5*g*t^2, infer g from examples |
+| unit_conversion | 1,594 | 99.4% | y = a*x (pure proportional), linear regression |
+| cipher/encryption | 1,576 | 38.4% | Unique substitution cipher per problem, limited by unseen chars |
+| numeral_system | 1,576 | 100% | Decimal → Roman numeral (all problems) |
+| symbol_transform | 1,555 | TBD | Symbol/character equation transforms |
+
+**Symbolic solver total**: ~57% of train solvable programmatically
+**Answer format**: 57.7% numeric, 25.7% string/mixed, 16.6% uppercase (Roman)
+**Prompt length**: min 177, max 510, median 281, mean 302 chars
+**Answer length**: min 1, max 39, median 5, mean 8 chars
+**Each cipher is unique**: 1,576 distinct substitution mappings for 1,576 problems
+
+**Difficulty distribution** (by symbolic solvability):
+- Easy (>95% solvable): numeral_system, unit_conversion, gravitational_constant
+- Medium (~38%): cipher (limited by incomplete alphabet mapping)
+- Hard (<10%): bit_manipulation, symbol_transform
+
+**Baseline Nano accuracy**: [TBD — needs GPU inference run]
+**Key error patterns**: [TBD — needs baseline run]
 
 ---
 
@@ -95,16 +126,56 @@ different weights or a different scoring mechanism. VERIFY IN PHASE 0.*
 - The specific prompt template the judge uses
 - Whether we can access the judge locally or only through submissions
 
-### Phase 0 Findings
-*(Fill in as you investigate)*
+### Phase 0 Findings (2026-03-26) — FROM METRIC SOURCE CODE
 
-**Scoring mechanism**: [TBD]
-**Score type**: continuous / binary / categorical [TBD]
-**Evaluation parameters**: temperature=[TBD], max_tokens=[TBD], top_p=[TBD]
-**Trace impact**: [TBD — how much does trace quality affect score vs correctness?]
-**Length preference**: [TBD — results of length experiment]
-**Format preference**: [TBD — results of format experiment]
-**Style preference**: [TBD — results of style experiment]
+**Scoring mechanism**: Pure accuracy. `score()` returns `num_correct / len(solution)`.
+Participant submits a LoRA adapter (zip with `adapter_config.json`).
+Metric code loads adapter onto Nemotron-3-Nano-30B-A3B-BF16 via vLLM,
+generates predictions, extracts answers from `\boxed{}`, compares to ground truth.
+
+**Score type**: Continuous float [0.0, 1.0] — fraction of correct answers
+
+**Evaluation parameters** (from metric `score()` defaults):
+- `temperature=1.0`
+- `top_p=1.0`
+- `max_tokens=3584`
+- `max_model_len=4096`
+- `max_num_seqs=128`
+- `gpu_memory_utilization=0.85`
+
+**Answer verification** (`verify()` function):
+- Numeric: `math.isclose(stored, predicted, rel_tol=1e-2, abs_tol=1e-5)`
+- String: case-insensitive exact match
+- Extraction: last `\boxed{}` content, fallback to "Final answer is:" patterns,
+  fallback to last number in text
+
+**Trace impact**: ZERO. Only the extracted answer matters. Reasoning traces are
+generated (thinking is enabled) but not scored. Only `\boxed{}` content is evaluated.
+
+**Length/format/style preference**: IRRELEVANT. Pure accuracy metric.
+
+**Prompt modification**: Metric appends to every prompt:
+`"\nPlease put your final answer inside \boxed{}. For example: \boxed{your answer}"`
+
+**HelpSteer hypothesis**: BUSTED. The competition does NOT use HelpSteer reward
+scoring. The weights (+0.80 correctness, -0.40 verbosity, etc.) are from Nano's
+training, NOT from this competition's evaluation.
+
+**vLLM inference details**:
+- `enable_lora=True`, `max_lora_rank=32`
+- `enable_prefix_caching=True`, `enable_chunked_prefill=True`
+- `tensor_parallel_size=1`
+- Chat template with `enable_thinking=True`
+- Single generation per prompt (no sampling/voting)
+
+**LoRA submission constraints** (from demo notebook):
+- Max rank: 32
+- `lora_alpha=16`
+- Target modules: `r".*\.(in_proj|out_proj|up_proj|down_proj)$"`
+- `lora_dropout=0.05`
+- `bias="none"`
+- `task_type=TaskType.CAUSAL_LM`
+- Output: `model.save_pretrained()` → zip → submit
 
 ---
 
@@ -126,15 +197,18 @@ different weights or a different scoring mechanism. VERIFY IN PHASE 0.*
 - Code sharing requirements
 - Model size or inference time limits
 
-### Phase 0 Findings
-*(Fill in as you investigate)*
+### Phase 0 Findings (2026-03-26)
 
-**Deadline**: [TBD]
-**Submission limit**: [TBD per day]
-**Inference time limit**: [TBD per submission]
-**GPU available per submission**: [TBD]
-**Private leaderboard**: yes/no [TBD]
-**Code requirements**: [TBD]
+**Deadline**: 2026-06-15 23:59:00 UTC (81 days from now)
+**Prize**: $106,388 USD
+**Teams**: 1,063 registered (as of 2026-03-26)
+**Entered**: NO — must accept rules to download data
+**Submission format**: LoRA adapter zip (adapter_config.json + weights)
+**Submission limit**: [TBD — check after joining]
+**Inference time limit**: [TBD — check after joining]
+**GPU available per submission**: G4 VM (RTX Blackwell-class, likely single GPU)
+**Private leaderboard**: [TBD — check after joining]
+**Code requirements**: Code competition — notebook must produce submission.zip
 
 ---
 
@@ -213,3 +287,5 @@ solved + aggressive test-time compute allocation**.
 | Date | Section | Update |
 |------|---------|--------|
 | 2026-03-22 | All | Initial knowledge base from research phase |
+| 2026-03-26 | Judge, Competition, Benchmark | Phase 0 intel from metric source code + Kaggle API. HelpSteer hypothesis BUSTED. Pure accuracy metric confirmed. LoRA submission format confirmed. Deadline + prize confirmed. |
+| 2026-03-26 | Benchmark | Data downloaded. 9,500 train / 3 public test. 6 balanced categories: bit_manipulation, gravitational_constant, unit_conversion, cipher, numeral_system, symbol_transform. All are "Alice's Wonderland" rule-induction puzzles with few-shot examples. Symbolic solver achieves 57% on train. |

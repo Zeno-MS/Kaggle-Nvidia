@@ -1,248 +1,241 @@
 # Living Strategy Document
 
-> **Last updated**: 2026-03-22
-> **Current phase**: Phase 0 — Intelligence Gathering
-> **Confidence level**: LOW — benchmark unseen, judge behavior unverified
-> **Next milestone**: Complete benchmark profiling and first judge characterization
+> **Last updated**: 2026-03-26
+> **Current phase**: Phase 0 — Data Access + Baseline (BLOCKED on competition join)
+> **Confidence level**: MEDIUM — metric mechanics confirmed, benchmark unseen
+> **Next milestone**: Accept competition rules → download data → profile → baseline
+> **Deadline**: 2026-06-15 (81 days)
 
 ---
 
-## Strategic Overview
+## What We Now Know (Phase 0 Intel — 2026-03-26)
 
-This strategy has three layers that execute in priority order:
+**The competition is a LoRA fine-tuning challenge.**
+
+You submit a rank-32 LoRA adapter. The metric code loads it onto Nemotron-3-Nano-30B
+via vLLM, generates answers to test prompts with `enable_thinking=True`, extracts
+the `\boxed{}` answer, and compares to ground truth. Score = fraction correct.
+
+This means:
+- **No judge model** — pure accuracy
+- **No trace scoring** — only `\boxed{}` content matters
+- **No inference-time tricks** — single forward pass, temperature=1.0
+- **One lever**: make the LoRA adapter improve Nano's reasoning accuracy
+
+### Busted Hypotheses
+- ~~HelpSteer judge scoring~~ → pure accuracy
+- ~~Trace optimization (Track B)~~ → traces not evaluated
+- ~~Symbolic solver as submission strategy~~ → must submit LoRA
+- ~~Conciseness optimization~~ → no verbosity penalty
+- ~~ARC-like grid transforms~~ → text-based reasoning problems
+
+---
+
+## Revised Strategic Overview
 
 ```
 ┌─────────────────────────────────────────────┐
-│  Layer 1: KNOW THE GAME                     │
-│  Understand benchmark structure + judge      │
-│  behavior before optimizing anything         │
+│  Layer 1: KNOW THE BENCHMARK                │
+│  Profile problem types, difficulty, baseline │
+│  accuracy. Identify where Nano fails.        │
 ├─────────────────────────────────────────────┤
-│  Layer 2: UNCONVENTIONAL EDGES              │
-│  Symbolic solving, judge alignment,          │
-│  cognitive trace design                      │
+│  Layer 2: DATA QUALITY                      │
+│  Synthetic data generation, data curation,   │
+│  curriculum design for LoRA training         │
 ├─────────────────────────────────────────────┤
-│  Layer 3: STANDARD PLAYBOOK (baseline)      │
-│  Prompt engineering, synthetic data,         │
-│  fine-tuning, self-consistency               │
+│  Layer 3: TRAINING OPTIMIZATION             │
+│  LoRA hyperparams, learning rate, epochs,    │
+│  loss functions, evaluation harness          │
 └─────────────────────────────────────────────┘
 ```
 
-Layer 1 gates everything. Without understanding the benchmark and judge, all
-optimization is premature. Layers 2 and 3 run in parallel once Layer 1 reaches
-sufficient confidence.
+Layer 1 still gates everything. Layers 2 and 3 iterate together.
 
 ---
 
-## Phase 0: Intelligence Gathering (CURRENT)
+## Phase 0: Intelligence Gathering (CURRENT — BLOCKED)
 
-**Goal**: Reach HIGH confidence on benchmark structure and MEDIUM confidence on
-judge behavior before committing compute to any optimization track.
+**Blocker**: Must accept competition rules on Kaggle to download data.
+Account: `stoicknight`. URL: https://www.kaggle.com/competitions/nvidia-nemotron-model-reasoning-challenge
 
-### 0.1 — Benchmark Reconnaissance
+### 0.1 — Data Access
+- [ ] Accept competition rules on Kaggle
+- [ ] Download train.csv and test.csv
+- [ ] Inspect schema: confirm `prompt` + `answer` columns
+- [ ] Count problems, check answer types (numeric, string, mixed)
 
-- [ ] Download and inspect the competition CSV
-- [ ] Profile puzzle types: string transforms? grid transforms? arithmetic? symbolic?
-- [ ] Identify input/output representation format
-- [ ] Cluster puzzles by apparent rule family
-- [ ] Estimate difficulty distribution
-- [ ] Determine: is this ARC-like, math-like, or something else entirely?
-- [ ] Check: are puzzles deterministic (one correct answer) or open-ended?
-- [ ] Document findings in `KNOWLEDGE_BASE.md` § Benchmark
-
-**Key question**: What is the *structure* of the latent rule space?
-If it's finite and enumerable → symbolic solving is dominant.
-If it's open-ended → neural reasoning becomes primary.
-
-### 0.2 — Judge Characterization
-
-- [ ] Read the Kaggle evaluation page parameters (temperature, max_tokens, top_p)
-- [ ] Read any Kaggle discussion threads about metric behavior
-- [ ] Inspect the metric model code/config if accessible
-- [ ] Run baseline Nemotron Nano on training data; record scores
-- [ ] Generate deliberately varied traces for the same correct answer:
-  - Minimal (answer only)
-  - Short (3-step reasoning)
-  - Medium (7-step reasoning with verification)
-  - Long (15+ step verbose reasoning)
-  - Measure: which scores highest?
-- [ ] Test format sensitivity: markdown vs plain text, numbered steps vs prose
-- [ ] Test: does an incorrect answer with beautiful reasoning outscore a
-  correct answer with poor reasoning? (Tests correctness weight)
-- [ ] Document findings in `KNOWLEDGE_BASE.md` § Judge
-
-**Key question**: Is the metric *primarily* scoring answer correctness, or does
-reasoning trace quality dominate? This determines the entire strategy allocation.
+### 0.2 — Benchmark Profiling
+- [ ] Categorize every problem by type (math, logic, games, graph, etc.)
+- [ ] Distribution of problem categories
+- [ ] Answer format distribution (numeric vs string vs complex)
+- [ ] Prompt length distribution
+- [ ] Identify problem families that share structure
 
 ### 0.3 — Baseline Establishment
+- [ ] Run unmodified Nano (no LoRA) on train set — record per-problem accuracy
+- [ ] Run with a trivial/identity LoRA — confirm submission pipeline works
+- [ ] Categorize failures: wrong reasoning? format issues? knowledge gaps?
+- [ ] Rank problem categories by difficulty (accuracy per category)
+- [ ] Identify the "free points" (easy categories) and "hard points" (low accuracy)
 
-- [ ] Run unmodified Nemotron 3 Nano (reasoning ON) on full training set
-- [ ] Record per-puzzle scores and aggregate
-- [ ] Run with reasoning OFF — measure delta
-- [ ] Identify the top-20 easiest and top-20 hardest puzzles
-- [ ] Error-categorize failures: wrong answer? right idea wrong execution?
-  format issue? complete misunderstanding?
-- [ ] Establish the baseline number to beat
-
----
-
-## Phase 1: Parallel Track Execution
-
-*Begins when Phase 0 reaches sufficient confidence. Tracks run in parallel.*
-
-### Track A — Symbolic Solver (High Priority)
-
-**Thesis**: If puzzles have discoverable transformation rules, a symbolic solver
-produces provably correct answers — the highest-value output given correctness
-weight of +0.80.
-
-**Implementation path** (adapt based on Phase 0 findings):
-
-```
-A.1  Define a DSL vocabulary matching discovered puzzle types
-A.2  Implement brute-force enumeration over short DSL programs
-A.3  Add LLM-guided program synthesis (generate Python, test, refine)
-A.4  Build verification: does candidate program reproduce all training examples?
-A.5  Portfolio: run multiple solvers in parallel, take first verified solution
-```
-
-**Success metric**: Coverage — what % of puzzles can the symbolic solver verify?
-**Pivot trigger**: If coverage < 20% after reasonable effort, deprioritize and
-reallocate compute to Track C.
-
-### Track B — Judge-Aligned Trace Generation (High Priority)
-
-**Thesis**: Given a correct answer (from Track A or Track C), the trace wrapper
-can add significant score by satisfying judge preferences.
-
-**Implementation path**:
-
-```
-B.1  Build the trace template (see Trace Architecture section below)
-B.2  Implement execution-trace narration: symbolic solution → NL trace
-B.3  Test trace variants against judge; identify scoring sweet spots
-B.4  Build best-of-N selection: generate K trace variants, score with judge
-B.5  If judge accessible as reward signal, implement GRPO trace optimization
-```
-
-**Success metric**: Score delta between raw correct answer and trace-wrapped answer.
-**Pivot trigger**: If trace quality has < 0.05 score impact, simplify to minimal
-trace and reallocate effort to Track A/C.
-
-### Track C — Neural Reasoning (Standard Playbook, Lower Priority)
-
-**Thesis**: For puzzles the symbolic solver can't crack, structured neural
-reasoning with self-consistency provides the fallback.
-
-**Implementation path**:
-
-```
-C.1  Prompt engineering: few-shot with trace template structure
-C.2  Self-consistency: sample N reasoning paths, majority vote on answer
-C.3  Synthetic data generation from teacher models (Nemotron Super, DeepSeek-R1)
-C.4  LoRA fine-tuning on synthetic + competition data
-C.5  Test-time training on per-puzzle examples (if compute allows)
-```
-
-**Success metric**: Accuracy on puzzles where symbolic solver fails.
-**Pivot trigger**: If Phase 0 reveals the benchmark is entirely open-ended
-reasoning (not transformation rules), promote this to top priority.
+### 0.4 — Competitive Intel
+- [ ] Check public leaderboard scores (current top: ~0.6 range per knowledge base)
+- [ ] Read Kaggle discussion forums for hints
+- [ ] Review public notebooks for approaches
+- [ ] Estimate: what accuracy would place top-10? top-50?
 
 ---
 
-## Phase 2: Integration and Optimization
+## Phase 1: Data Engine
 
-**Goal**: Compose all tracks into the unified pipeline and optimize end-to-end.
+**Goal**: Build the highest-quality training dataset for LoRA fine-tuning.
+
+### Track A — Synthetic Data Generation (HIGH PRIORITY)
+
+**Thesis**: The LoRA needs to see many more reasoning problems than the train set
+provides. Generate synthetic problems in the same distribution as the benchmark.
 
 ```
-Phase 2.1  Wire orchestrator: symbolic → trace → judge → fallback
-Phase 2.2  Profile inference time budget per puzzle
-Phase 2.3  Implement adaptive compute allocation (more samples for harder puzzles)
-Phase 2.4  Build offline evaluation harness with surrogate judge
-Phase 2.5  Systematic hyperparameter search (temperature, top_p, sample count, 
-           reasoning budget, trace template variants)
+A.1  Categorize train problems into families
+A.2  For each family, use teacher models to generate similar problems:
+     - Nemotron-3-Super-120B (best open teacher)
+     - DeepSeek-R1 (strong reasoning)
+     - Qwen-2.5-72B (diverse generation)
+A.3  Verify synthetic answers programmatically where possible:
+     - Math: evaluate with sympy/sage
+     - Logic: formal verification
+     - Games: simulate (Tower of Hanoi, etc.)
+A.4  Filter: keep only verified-correct synthetic data
+A.5  Scale: 10x-100x the competition train set
+```
+
+**Key insight**: The symbolic solver code already written can be repurposed as a
+**verification engine** for synthetic data. Generate candidate problems + solutions
+with LLMs, verify with symbolic execution, keep only correct ones.
+
+### Track B — Data Curation (MEDIUM PRIORITY)
+
+```
+B.1  Clean train data: check for ambiguous prompts, multiple valid answers
+B.2  Augment: rephrase problems while preserving answers
+B.3  Difficulty-aware sampling: oversample hard problem types
+B.4  Format training data with proper chat template + \boxed{} answers
+B.5  Include chain-of-thought reasoning in training targets
+```
+
+### Track C — External Data (MEDIUM PRIORITY)
+
+Leverage existing reasoning datasets:
+- `nvidia/Nemotron-RL-ReasoningGym-v1` (15K samples, 104 environments)
+- `nvidia/Puzzle-KD-Nemotron-Post-Training-Dataset-v2` (851K samples)
+- MATH dataset, GSM8K, AIME problems
+- ARC-style puzzle datasets (if benchmark includes these)
+- Competition-specific: filter external data to match benchmark distribution
+
+---
+
+## Phase 2: LoRA Training
+
+**Goal**: Train the best rank-32 LoRA adapter.
+
+### 2.1 — Training Infrastructure
+```
+- Set up training on Colab Pro / local GPU
+- Use PEFT library (same as demo notebook)
+- Target modules: in_proj, out_proj, up_proj, down_proj
+- Match demo: rank=32, alpha=16, dropout=0.05
+```
+
+### 2.2 — Training Strategy
+```
+- Baseline: SFT on competition train data with CoT + \boxed{} format
+- Add synthetic data progressively (measure accuracy gain per batch)
+- Learning rate sweep: 1e-5 to 5e-4
+- Epochs: monitor for overfitting (small test set means high overfit risk)
+- Loss: standard causal LM loss on full response (reasoning + answer)
+```
+
+### 2.3 — Evaluation Harness
+```
+- Replicate metric locally: vLLM + LoRA loading + extract_final_answer()
+- Use competition's exact verify() function
+- Hold out validation split from train data
+- Track accuracy per problem category
+- Must test at temperature=1.0 (matches eval) — run multiple seeds
+```
+
+### 2.4 — Advanced Training (Phase 2+)
+```
+- RLVR: Reinforcement Learning from Verifiable Rewards
+  - Use symbolic verifiers as reward signal
+  - GRPO or PPO on reasoning traces
+- Curriculum learning: easy → hard problem ordering
+- DPO: generate correct + incorrect reasoning pairs, train preference
+- Test-time training: if compute allows, fine-tune per-problem-family
 ```
 
 ---
 
 ## Phase 3: Submission and Iteration
 
-**Goal**: Manage limited submission slots wisely.
-
 ```
-Phase 3.1  Establish submission cadence (test major changes only)
-Phase 3.2  Monitor leaderboard vs offline surrogate correlation
-Phase 3.3  Diagnose per-puzzle regressions after each submission
-Phase 3.4  Update strategy based on public leaderboard dynamics
-Phase 3.5  Reserve final submissions for best-performing configuration
+3.1  First submission: baseline LoRA (SFT on train data only)
+3.2  Monitor leaderboard position vs offline eval correlation
+3.3  Iterate: add synthetic data, retrain, submit
+3.4  Track accuracy by problem category across submissions
+3.5  Reserve final submissions for best configuration
+3.6  Ensemble exploration: can we benefit from multiple LoRA training runs?
 ```
 
 ---
 
-## Trace Architecture (Template v1)
+## Competitive Edges (Revised)
 
-This is the target structure for every reasoning trace, designed to maximize
-Nemotron's HelpSteer scores. Adapt based on Phase 0 judge characterization.
+### Edge 1: Verified Synthetic Data (Symbolic Verification)
+Most competitors will generate synthetic data with LLMs and hope it's correct.
+We can **verify** math/logic/game solutions programmatically, ensuring our training
+data has zero label noise. Higher quality training data → better LoRA.
 
-```
-[COMPREHENSION] — 1-2 sentences
-Restate the problem in your own words. Demonstrate you understand what
-transformation is being asked for.
-→ Maps to: Helpfulness (+0.65)
+### Edge 2: Problem-Category-Aware Training
+By profiling which categories Nano struggles with, we can over-represent those
+categories in training data. Targeted improvement on weak areas.
 
-[STRATEGY] — 1 sentence
-State the approach: "I'll compare input-output pairs to identify the rule."
-→ Maps to: Coherence (+0.45)
+### Edge 3: Evaluation at Temperature=1.0
+Many competitors will evaluate their LoRA at temperature=0 (greedy) during
+development. The competition evaluates at temperature=1.0. Training and evaluating
+with the correct temperature matters.
 
-[DERIVATION] — 3-7 steps, one logical move per step
-Step 1: Observe [specific pattern] in Example 1...
-Step 2: Verify this pattern holds in Example 2...
-Step 3: Therefore, the rule appears to be [rule]...
-→ Maps to: Correctness (+0.80), Complexity (+0.55)
-
-[VERIFICATION] — 1-2 sentences
-"Applying this rule to Example N: [input] → [expected output] ✓"
-→ Maps to: Correctness (+0.80)
-
-[ANSWER] — 1-2 sentences
-Apply discovered rule to test input. State final answer explicitly.
-→ Maps to: Helpfulness (+0.65)
-```
-
-**Anti-patterns to avoid** (given -0.40 verbosity weight):
-- No preamble ("Sure, I'd be happy to help...")
-- No restating already-established facts
-- No hedging language ("It might be...", "Perhaps...")
-- No meta-commentary about the reasoning process itself
-- No unnecessary examples beyond what's needed for verification
+### Edge 4: Reasoning Trace Quality in Training Data
+While traces aren't scored, they affect the model's ability to reach correct answers.
+Training with high-quality step-by-step reasoning (from teacher models) should
+improve the LoRA's reasoning path quality → higher accuracy.
 
 ---
 
-## Risk Register
+## Risk Register (Revised)
 
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|-----------|------------|
-| Benchmark is nothing like ARC/transformation puzzles | HIGH | MEDIUM | Phase 0 gates all work; pivot plan in place |
-| Judge doesn't actually penalize verbosity | MEDIUM | MEDIUM | Phase 0 judge characterization will test this directly |
-| Symbolic solver coverage too low to matter | HIGH | MEDIUM | Track C (neural) always runs as fallback |
-| Fine-tuning hurts judge alignment (model drift) | MEDIUM | LOW | Test fine-tuned vs base on judge before committing |
-| Compute insufficient for TTT or RL | MEDIUM | HIGH | All tracks have compute-light variants |
-| Competition rules prohibit external model calls | LOW | LOW | All tracks work with local Nano inference only |
+| Benchmark is much harder than ReasoningGym | HIGH | MEDIUM | Phase 0 profiling; adjust expectations early |
+| Overfitting to small train set | HIGH | HIGH | Hold out validation; use synthetic data; regularization |
+| Synthetic data doesn't match benchmark distribution | MEDIUM | MEDIUM | Profile benchmark first; filter synthetic data to match |
+| Compute insufficient for large-scale RL training | MEDIUM | HIGH | Start with SFT; use RLVR only if SFT plateaus |
+| LoRA rank 32 is too constrained | MEDIUM | LOW | Optimize which layers to target; alpha tuning |
+| Temperature=1.0 causes high variance in scoring | MEDIUM | HIGH | Evaluate with multiple seeds; train for robustness |
 
 ---
 
-## Pivot Conditions
-
-These are pre-committed decision rules. If a condition triggers, execute the
-corresponding pivot without deliberation.
+## Pivot Conditions (Revised)
 
 | Condition | Pivot |
 |-----------|-------|
-| Benchmark is NOT transformation-rule puzzles | Abandon Track A; promote Track C to primary; adapt trace template for open-ended reasoning |
-| Judge verbosity penalty is NOT confirmed | Remove conciseness constraint; allow longer traces; re-optimize template |
-| Symbolic solver achieves > 60% coverage | Go all-in on Track A + B; Track C only for residual puzzles |
-| Symbolic solver achieves < 10% coverage | Deprioritize Track A; focus on Track B + C |
-| Leaderboard leader uses a simple approach | Study their method; consider whether we're over-engineering |
-| Fine-tuned model scores WORSE than base on judge | Revert to base Nano; invest all compute in inference-time optimization |
+| Baseline Nano accuracy > 70% | Focus on hard problems only; targeted synthetic data |
+| Baseline Nano accuracy < 30% | The model needs fundamental capability; large-scale SFT + RL |
+| Benchmark is mostly math | Prioritize MATH/GSM8K-style synthetic data + sympy verification |
+| Benchmark is mostly logic/games | Prioritize programmatic problem generators + simulators |
+| SFT on train data alone reaches top-100 | Double down on data quality; skip RL complexity |
+| Top leaderboard scores > 0.9 | Competition is about marginal gains; focus on hard tail |
+| Top leaderboard scores < 0.5 | Competition is fundamentally hard; novel approaches needed |
 
 ---
 
@@ -250,11 +243,9 @@ corresponding pivot without deliberation.
 
 | Resource | Allocation |
 |----------|-----------|
-| Your time | 80% Phase 0 intelligence gathering, 20% pipeline skeleton |
-| Colab Pro | Benchmark profiling, baseline runs, judge probing |
-| Kaggle submissions | SAVE — do not burn on early experiments |
-
-*This allocation will shift as phases progress. Update when entering Phase 1.*
+| Time | 100% Phase 0 — cannot proceed without data |
+| Compute | None committed yet — waiting on benchmark profile |
+| Kaggle submissions | SAVE until baseline is established |
 
 ---
 
@@ -263,3 +254,4 @@ corresponding pivot without deliberation.
 | Date | Change | Reason |
 |------|--------|--------|
 | 2026-03-22 | Initial strategy created | Project kickoff |
+| 2026-03-26 | **MAJOR REWRITE** | Metric source code analysis revealed pure accuracy scoring, LoRA submission format. HelpSteer judge hypothesis busted. Tracks A (symbolic solver) and B (trace optimization) repurposed. Strategy now centered on LoRA fine-tuning with verified synthetic data. |

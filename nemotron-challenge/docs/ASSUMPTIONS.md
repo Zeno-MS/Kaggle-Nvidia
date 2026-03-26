@@ -19,15 +19,18 @@
 ## Category: Benchmark Structure
 
 ### A1. Puzzles are logical transformation rules
-**Status**: UNTESTED
-**Confidence**: MEDIUM
-**Source**: Competition description says "logical reasoning puzzles requiring
-identification and application of underlying transformation rules"
-**Test**: Download CSV, inspect puzzle structure
-**Impact if busted**: Abandon symbolic solver track (Track A); restructure
-entire pipeline around neural reasoning
-**Notes**: The phrase "transformation rules" strongly suggests ARC-like structure,
-but could be much broader than grid transforms.
+**Status**: REVISED
+**Confidence**: HIGH
+**Source**: Metric code reveals `prompt` + `answer` CSV format. Nemotron-RL-ReasoningGym-v1
+dataset (NVIDIA's open reasoning benchmark) covers algebra, arithmetic, logic, graph
+theory, games, geometry, computation, statistics, and string tasks. NOT grid transforms.
+**Evidence**: Metric `extract_final_answer()` looks for `\boxed{}` or numeric answers.
+`verify()` does numeric tolerance or string comparison. This is math/reasoning, not ARC.
+**Revised assumption**: Puzzles are diverse text-based reasoning problems (math, logic,
+games, etc.) with verifiable answers. Not transformation-rule puzzles in the ARC sense.
+**Impact**: Symbolic solver as standalone track is not viable. But symbolic/programmatic
+solving of specific problem types (algebra, arithmetic) can generate **training data**
+for the LoRA fine-tune.
 
 ### A2. Puzzles have deterministic correct answers
 **Status**: UNTESTED
@@ -48,13 +51,15 @@ most puzzles
 LLM-guided program synthesis only
 
 ### A4. Puzzles come with training examples (few-shot format)
-**Status**: UNTESTED
-**Confidence**: HIGH
-**Source**: Competition references "transformation rules" implying example-based
-rule discovery; ARC-like structure
-**Test**: Inspect CSV structure
-**Impact if busted**: Major — fundamentally changes the task from rule induction
-to something else
+**Status**: CONFIRMED (examples embedded in prompt text)
+**Confidence**: CONFIRMED
+**Source**: train.csv inspection (2026-03-26). Each prompt contains 3-11 input→output
+examples embedded in the prompt text, followed by a "Now, determine the output for:" query.
+**Evidence**: All 9,500 prompts follow pattern: description → examples → query.
+The CSV is flat (one prompt per row) but the prompt itself contains the few-shot examples.
+**Impact**: MAJOR — these are genuine rule-induction puzzles. The model must discover the
+hidden transformation rule from examples and apply it. Symbolic solvers CAN solve these
+by analyzing the examples programmatically → perfect training data at scale.
 
 ### A5. The dataset is ~3MB CSV as reported
 **Status**: UNTESTED
@@ -68,55 +73,61 @@ to something else
 ## Category: Judge Model Behavior
 
 ### B1. The judge is Nemotron-3-Nano-30B-A3B-BF16
-**Status**: UNTESTED (but high confidence)
-**Confidence**: HIGH
-**Source**: Kaggle metric model identifier: `metric/nemotron-3-nano-30b-a3b-bf16`
-**Test**: Confirm on Kaggle evaluation page
-**Impact if busted**: Moderate — would need to re-profile judge preferences
+**Status**: CONFIRMED (but role is different than assumed)
+**Confidence**: CONFIRMED
+**Source**: Metric source code: `MODEL_PATH = kagglehub.model_download('metric/nemotron-3-nano-30b-a3b-bf16/transformers/default')`
+**Evidence**: The model is NOT a judge — it IS the inference model. Your LoRA adapter
+is loaded onto this base model via vLLM. The model generates answers which are then
+checked against ground truth. There is no separate "judge" model.
+**Impact**: The entire "judge optimization" track is moot. There is no judge to optimize for.
 
 ### B2. The judge penalizes verbosity
-**Status**: UNTESTED
-**Confidence**: MEDIUM
-**Source**: HelpSteer2 reward model weights show -0.40 on verbosity dimension;
-Nemotron 3 Nano trained with HelpSteer-derived rewards
-**Test**: Submit identical correct answers with varying trace lengths;
-measure score differences
-**Impact if busted**: Remove conciseness constraint; allow longer traces;
-re-optimize trace template for different preference
+**Status**: BUSTED
+**Confidence**: CONFIRMED BUSTED
+**Source**: Metric source code — pure accuracy scoring via `verify()`.
+**Evidence**: `accuracy = num_correct / len(solution)`. No trace evaluation at all.
+Only the extracted `\boxed{}` content is compared to ground truth.
+**Impact**: No verbosity penalty exists. The model should reason freely (thinking
+is enabled via chat template). Longer reasoning traces may actually help accuracy
+by enabling better chain-of-thought. The only thing that matters is getting the
+right answer inside `\boxed{}`.
 
-### B3. Correctness is the dominant scoring factor
-**Status**: UNTESTED
-**Confidence**: MEDIUM
-**Source**: HelpSteer2 weights show +0.80 on correctness
-**Test**: Submit (a) correct answer with poor trace vs (b) wrong answer with
-excellent trace; compare scores
-**Impact if busted**: HIGH — if trace quality > correctness, entire pipeline
-priority shifts from "solve correctly" to "reason beautifully"
+### B3. Correctness is the ONLY scoring factor
+**Status**: CONFIRMED (stronger than assumed)
+**Confidence**: CONFIRMED
+**Source**: Metric source code — `score()` returns pure accuracy.
+**Evidence**: No trace evaluation. No partial credit. Binary correct/incorrect per problem.
+**Impact**: Strategy is 100% about maximizing the number of correctly answered problems.
+Reasoning quality only matters insofar as it leads to correct final answers.
 
 ### B4. The judge evaluates both reasoning trace AND final answer
-**Status**: UNTESTED
-**Confidence**: HIGH
-**Source**: Nemotron Nano architecture produces reasoning trace + final response;
-metric described as scoring "reasoning quality and answer correctness"
-**Test**: Read Kaggle evaluation page; submit with and without traces
-**Impact if busted**: If answer-only, simplify pipeline dramatically
+**Status**: BUSTED
+**Confidence**: CONFIRMED BUSTED
+**Source**: Metric source code — `extract_final_answer()` only extracts `\boxed{}` content.
+**Evidence**: The model generates with `enable_thinking=True` (reasoning traces produced),
+but only the final `\boxed{}` answer is extracted and verified. Traces are discarded.
+**Impact**: Reasoning traces help the MODEL think better but are not directly scored.
+The LoRA should be trained to produce good reasoning that leads to correct answers,
+but trace formatting is irrelevant to scoring.
 
 ### B5. The judge has self-preference bias for Nemotron-style text
-**Status**: UNTESTED
-**Confidence**: MEDIUM
-**Source**: Self-preference bias is documented across LLM judges (arXiv 2410.21819);
-models prefer text with lower perplexity relative to their own distribution
-**Test**: Compare scores for traces in Nemotron's native reasoning style vs
-generic CoT style vs academic style
-**Impact if busted**: LOW — still useful to match style for other reasons
+**Status**: BUSTED (not applicable)
+**Confidence**: CONFIRMED BUSTED
+**Source**: No judge exists. Pure accuracy metric.
+**Evidence**: There is no LLM-as-judge evaluation. The metric is `verify()` which
+does string/numeric comparison against ground truth answers.
+**Impact**: None — this entire line of investigation was based on a false premise.
 
 ### B6. Evaluation parameters (temperature, top-p, max_tokens) are configurable
-**Status**: UNTESTED
-**Confidence**: HIGH
-**Source**: Kaggle discussion thread mentions "parameters on the Evaluation page
-override default code values"
-**Test**: Check Kaggle evaluation page
-**Impact if busted**: LOW — just means we can't tune these
+**Status**: CONFIRMED (but we don't control them)
+**Confidence**: CONFIRMED
+**Source**: Metric `score()` function accepts these as kwargs with defaults.
+Kaggle evaluation page may override defaults.
+**Evidence**: Defaults are `temperature=1.0, top_p=1.0, max_tokens=3584, max_model_len=4096`.
+These are set by the competition, not by participants.
+**Impact**: We must train the LoRA to perform well at temperature=1.0 (stochastic sampling).
+This means the model needs robust reasoning — can't rely on greedy decoding consistency.
+Training with temperature sampling may help.
 
 ---
 
@@ -206,3 +217,4 @@ D1 (fits on G4) ──→ All inference-time approaches
 | Date | Assumptions Reviewed | Changes |
 |------|---------------------|---------|
 | 2026-03-22 | All | Initial creation |
+| 2026-03-26 | A1,A4,B1-B6 | Major revision from metric source code. A1 REVISED (not grid transforms), A4 BUSTED (no few-shot), B1 CONFIRMED (model not judge), B2 BUSTED (no verbosity penalty), B3 CONFIRMED (accuracy only), B4 BUSTED (traces not scored), B5 BUSTED (no judge), B6 CONFIRMED (params fixed by competition). Strategy pivot required. |

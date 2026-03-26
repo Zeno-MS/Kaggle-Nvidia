@@ -1,71 +1,100 @@
 # Nemotron Challenge — Default Configuration
-# 
-# All values marked [PHASE 0] are placeholders.
-# Update after benchmark and judge profiling.
+#
+# Updated 2026-03-26 from metric source code analysis.
+# Values marked [VERIFIED] are confirmed from metric/demo notebooks.
+# Values marked [TBD] still need benchmark data to determine.
 #
 # Usage: Config().load_yaml("configs/default.yaml")
 
+# --- Competition-fixed parameters (from metric source code) ---
+
+evaluation:                                # [VERIFIED] from metric score() function
+  model_id: "nemotron-3-nano-30b-a3b-bf16"
+  temperature: 1.0
+  top_p: 1.0
+  max_tokens: 3584
+  max_model_len: 4096
+  max_num_seqs: 128
+  gpu_memory_utilization: 0.85
+  tensor_parallel_size: 1
+  answer_format: "\\boxed{}"              # Metric appends boxed instruction to every prompt
+  answer_extraction: "last_boxed"         # extract_final_answer() takes last \boxed{} match
+  numeric_tolerance: 0.01                 # rel_tol=1e-2, abs_tol=1e-5
+  string_comparison: "case_insensitive"
+  enable_thinking: true                   # Chat template uses enable_thinking=True
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+# --- LoRA adapter constraints (from demo notebook) ---
+
+lora:                                      # [VERIFIED] from submission demo
+  rank: 32                                 # Maximum allowed
+  alpha: 16
+  target_modules: ".*\\.(in_proj|out_proj|up_proj|down_proj)$"
+  dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+# --- Benchmark (needs data download to confirm) ---
+
 benchmark:
-  puzzle_format: "unknown"            # [PHASE 0] Update after seeing data
-  has_training_examples: true
-  num_examples_per_puzzle: 3
-  deterministic_answers: true
+  format: "csv"                            # [VERIFIED] train.csv + test.csv
+  prompt_column: "prompt"                  # [VERIFIED] from metric code: item.prompt
+  answer_column: "answer"                  # [VERIFIED] from metric code: item.answer
+  train_size: "unknown"                    # [TBD] ~3MB CSV
+  test_size: "unknown"                     # [TBD] ~1.4KB CSV (small)
+  problem_types: "mixed_reasoning"         # [TBD] expected: math, logic, games, etc.
+  answer_types: "numeric_and_string"       # [VERIFIED] verify() handles both
 
-judge:
-  model_id: "nemotron-3-nano-30b-a3b-bf16"
-  weight_correctness: 0.80
-  weight_helpfulness: 0.65
-  weight_complexity: 0.55
-  weight_coherence: 0.45
-  weight_verbosity: -0.40
-  eval_temperature: 1.0               # [PHASE 0] Check Kaggle eval page
-  eval_max_tokens: 4096               # [PHASE 0] Check Kaggle eval page
-  eval_top_p: 0.95                    # [PHASE 0] Check Kaggle eval page
+# --- Training configuration ---
 
-symbolic:
+training:
+  learning_rate: 2e-4                      # [TBD] starting point, needs sweep
+  num_epochs: 3                            # [TBD] start conservative, watch for overfit
+  batch_size: 4                            # [TBD] depends on GPU memory
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  max_seq_length: 4096                     # Match eval max_model_len
+  fp16: false
+  bf16: true                               # Match model dtype
+  include_reasoning_in_target: true        # Train on full CoT + answer
+  answer_format_in_training: "\\boxed{}"   # Ensure model learns to produce boxed answers
+
+# --- Synthetic data generation ---
+
+synthetic:
+  teacher_models:
+    - "nemotron-3-super-120b-a12b"         # Best open NVIDIA teacher
+    - "deepseek-r1"                        # Strong reasoning
+    - "qwen-2.5-72b"                       # Diverse generation
+  verification_enabled: true               # Verify answers programmatically
+  target_multiplier: 10                    # [TBD] aim for 10x train set
+  categories_to_oversample: []             # [TBD] fill after baseline profiling
+
+# --- External datasets ---
+
+external_data:
+  - name: "Nemotron-RL-ReasoningGym-v1"
+    source: "huggingface"
+    samples: 15000
+    relevance: "high"                      # 104 reasoning environments, matches expected benchmark
+  - name: "Puzzle-KD-Nemotron-Post-Training-Dataset-v2"
+    source: "huggingface"
+    samples: 851343
+    relevance: "medium"                    # Math/code/STEM, may overlap with benchmark
+  - name: "MATH"
+    source: "huggingface"
+    relevance: "conditional"               # Only if benchmark is math-heavy
+  - name: "GSM8K"
+    source: "huggingface"
+    relevance: "conditional"
+
+# --- Local evaluation harness ---
+
+local_eval:
   enabled: true
-  timeout_per_puzzle_sec: 30.0
-  max_program_depth: 5
-  max_candidates: 100
-  use_dsl_enumeration: true
-  use_llm_program_synthesis: true
-  use_ilp: false
-  synthesis_temperature: 0.8
-  synthesis_max_attempts: 10
-
-trace:
-  enabled: true
-  template_version: "v1"
-  generation_temperature: 0.7
-  max_trace_tokens: 512               # Keep concise (verbosity penalty)
-  num_trace_candidates: 3
-  max_derivation_steps: 7
-  min_derivation_steps: 3
-  include_verification: true
-  include_strategy_statement: true
-  match_nemotron_style: true
-  use_think_tags: true
-
-neural:
-  enabled: true
-  num_samples: 8
-  voting_method: "majority"
-  sampling_temperature: 0.8
-  reasoning_on: true
-  reasoning_budget: 2048
-  num_few_shot: 3
-  few_shot_source: "symbolic"
-  model_id: "nemotron-3-nano-30b-a3b-bf16"
-  quantization: "fp8"
-
-orchestrator:
-  symbolic_first: true
-  skip_trace_if_symbolic_fails: false
-  adaptive_sampling: true
-  easy_puzzle_samples: 2
-  hard_puzzle_samples: 16
-  difficulty_threshold: 0.5
-  total_time_budget_sec: 18000        # [PHASE 0] Check actual submission limit
-  time_per_puzzle_sec: 60.0           # [PHASE 0] = total / num_puzzles
-  verbose: true
-  log_per_puzzle: true
+  validation_split: 0.15                   # Hold out 15% of train for validation
+  num_eval_seeds: 3                        # Run eval 3x at temp=1.0, average
+  replicate_metric: true                   # Use exact same verify() + extract_final_answer()
+  track_per_category: true                 # [TBD] requires category labels
