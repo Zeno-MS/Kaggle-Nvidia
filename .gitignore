@@ -2,6 +2,8 @@
 nemotron-challenge/data/*.csv
 nemotron-challenge/data/*.zip
 nemotron-challenge/data/*.jsonl
+# Exception: GPT-4.1 generated CoT traces (not competition data)
+!nemotron-challenge/data/cipher_cot_gpt41.jsonl
 
 # Python
 __pycache__/
