@@ -1,192 +1,143 @@
 """
-Benchmark Profiler
+Benchmark Profiler — Post-Pivot
 
-Phase 0 intelligence-gathering tool. Analyzes the competition dataset to answer
-the critical questions that gate our entire strategy:
+Profiles the Alice's Wonderland competition data. All 9,500 problems are
+rule-induction puzzles: given input→output examples, discover the hidden
+transformation rule and apply it.
 
-  1. What types of puzzles are in the benchmark?
-  2. What is the difficulty distribution?
-  3. What is the input/output representation?
-  4. Can we identify families/clusters of related puzzles?
-  5. Is the rule space finite and enumerable?
-
-Run this FIRST before any optimization work.
+6 balanced categories (~16.5% each):
+  bit_manipulation, gravitational_constant, unit_conversion,
+  cipher, numeral_system, symbol_transform
 
 Usage:
-    from analysis.benchmark_profiler import BenchmarkProfiler
-    profiler = BenchmarkProfiler("path/to/competition/data.csv")
-    report = profiler.full_report()
+    from analysis.benchmark_profiler import profile
+    report = profile("data/train.csv")
     print(report)
 """
 
 import logging
 from collections import Counter
-from pathlib import Path
+from pipeline.utils import load_problems, Problem
 
 logger = logging.getLogger(__name__)
 
 
-class BenchmarkProfiler:
+def profile(csv_path: str) -> str:
+    """Generate a full profiling report on the competition data."""
+    problems = load_problems(csv_path)
+
+    sections = [
+        _basic_stats(problems),
+        _category_distribution(problems),
+        _answer_format_distribution(problems),
+        _prompt_length_stats(problems),
+        _examples_per_problem(problems),
+        _sample_problems(problems),
+    ]
+    return "\n\n---\n\n".join(sections)
+
+
+def category_accuracy(problems: list[Problem], predictions: dict[str, str]) -> str:
     """
-    Comprehensive benchmark analysis tool.
+    Given a dict of {problem_id: predicted_answer}, compute per-category accuracy.
     """
-    
-    def __init__(self, data_path: str):
-        self.data_path = Path(data_path)
-        self.puzzles = []
-        self._loaded = False
-    
-    def load(self):
-        """Load puzzles from the competition data."""
-        from pipeline.utils import load_puzzles_from_csv
-        self.puzzles = load_puzzles_from_csv(str(self.data_path))
-        self._loaded = True
-        logger.info(f"Loaded {len(self.puzzles)} puzzles for profiling")
-    
-    def full_report(self) -> str:
-        """Generate a comprehensive profiling report."""
-        if not self._loaded:
-            self.load()
-        
-        sections = [
-            "# Benchmark Profile Report\n",
-            self._basic_stats(),
-            self._format_analysis(),
-            self._length_analysis(),
-            self._difficulty_estimation(),
-            self._recommendations(),
-        ]
-        
-        return "\n\n---\n\n".join(sections)
-    
-    def _basic_stats(self) -> str:
-        """Basic dataset statistics."""
-        n = len(self.puzzles)
-        
-        has_examples = sum(1 for p in self.puzzles if p.training_examples)
-        has_test_input = sum(1 for p in self.puzzles if p.test_input)
-        has_expected = sum(1 for p in self.puzzles if p.expected_output)
-        
-        return (
-            f"## Basic Statistics\n"
-            f"- Total puzzles: {n}\n"
-            f"- With training examples: {has_examples} ({100*has_examples/max(n,1):.0f}%)\n"
-            f"- With test input: {has_test_input} ({100*has_test_input/max(n,1):.0f}%)\n"
-            f"- With expected output (train only): {has_expected} ({100*has_expected/max(n,1):.0f}%)\n"
-            f"- Avg training examples per puzzle: {self._avg_examples():.1f}"
-        )
-    
-    def _format_analysis(self) -> str:
-        """Analyze the format of inputs and outputs."""
-        input_types = Counter()
-        output_types = Counter()
-        
-        for p in self.puzzles[:50]:  # Sample first 50
-            if p.test_input:
-                input_types[self._classify_format(str(p.test_input))] += 1
-            if p.expected_output:
-                output_types[self._classify_format(str(p.expected_output))] += 1
-        
-        report = "## Format Analysis (sampled from first 50 puzzles)\n"
-        report += f"\nInput types: {dict(input_types)}"
-        report += f"\nOutput types: {dict(output_types)}"
-        
-        # Show a few examples
-        report += "\n\n### Sample Puzzles\n"
-        for p in self.puzzles[:3]:
-            report += f"\n**Puzzle {p.puzzle_id}**\n"
-            report += f"  Instruction: {str(p.instruction)[:200]}...\n"
-            if p.training_examples:
-                report += f"  Training examples ({len(p.training_examples)}):\n"
-                for i, (inp, out) in enumerate(p.training_examples[:2]):
-                    report += f"    {i+1}. Input: {str(inp)[:100]}... → Output: {str(out)[:100]}...\n"
-            if p.test_input:
-                report += f"  Test input: {str(p.test_input)[:100]}...\n"
-        
-        return report
-    
-    def _length_analysis(self) -> str:
-        """Analyze lengths of inputs, outputs, and instructions."""
-        instruction_lens = [len(str(p.instruction)) for p in self.puzzles]
-        
-        input_lens = [
-            len(str(p.test_input)) for p in self.puzzles if p.test_input
-        ]
-        
-        output_lens = [
-            len(str(p.expected_output)) for p in self.puzzles if p.expected_output
-        ]
-        
-        def stats(values, name):
-            if not values:
-                return f"{name}: No data"
-            values.sort()
-            return (
-                f"{name}:\n"
-                f"  Min: {values[0]}, Max: {values[-1]}, "
-                f"Median: {values[len(values)//2]}, "
-                f"Mean: {sum(values)/len(values):.0f}"
-            )
-        
-        return (
-            f"## Length Analysis\n\n"
-            f"{stats(instruction_lens, 'Instruction length (chars)')}\n\n"
-            f"{stats(input_lens, 'Test input length (chars)')}\n\n"
-            f"{stats(output_lens, 'Expected output length (chars)')}"
-        )
-    
-    def _difficulty_estimation(self) -> str:
-        """
-        Estimate puzzle difficulty distribution.
-        
-        Proxies for difficulty:
-        - Number of training examples (fewer = harder)
-        - Length/complexity of transformation
-        - Whether simple pattern matching suffices
-        """
-        report = "## Difficulty Estimation\n\n"
-        report += "*(Run baseline model to get actual difficulty estimates)*\n\n"
-        
-        # Example count distribution
-        example_counts = Counter(
-            len(p.training_examples) for p in self.puzzles
-        )
-        report += f"Training examples distribution: {dict(sorted(example_counts.items()))}\n"
-        
-        return report
-    
-    def _recommendations(self) -> str:
-        """
-        Generate strategic recommendations based on profiling.
-        These feed directly into STRATEGY.md and ASSUMPTIONS.md.
-        """
-        return (
-            "## Recommendations\n\n"
-            "*(Auto-generated after profiling — fill in based on findings)*\n\n"
-            "1. **Puzzle format**: [What format are the puzzles? Update ASSUMPTIONS A1]\n"
-            "2. **Symbolic solver viability**: [Can puzzles be solved programmatically?]\n"
-            "3. **Trace template**: [What trace structure fits these puzzles?]\n"
-            "4. **Priority adjustment**: [Should we shift priority between tracks?]\n"
-            "5. **Key vulnerability**: [Where will most competitors struggle?]"
-        )
-    
-    # ── Helpers ───────────────────────────────────────────────────
-    
-    def _avg_examples(self) -> float:
-        counts = [len(p.training_examples) for p in self.puzzles]
-        return sum(counts) / max(len(counts), 1)
-    
-    def _classify_format(self, text: str) -> str:
-        """Classify the format of a puzzle input/output."""
-        text = text.strip()
-        
-        if text.startswith('[') or text.startswith('{'):
-            return "json/structured"
-        elif text.startswith('|') or '\t' in text:
-            return "grid/table"
-        elif all(c in '0123456789 \n' for c in text):
-            return "numeric"
-        elif len(text.split('\n')) > 3:
-            return "multiline"
+    from pipeline.utils import verify
+
+    by_cat = {}
+    for p in problems:
+        if p.id not in predictions:
+            continue
+        cat = p.category or "unknown"
+        if cat not in by_cat:
+            by_cat[cat] = {"correct": 0, "total": 0}
+        by_cat[cat]["total"] += 1
+        if verify(p.answer, predictions[p.id]):
+            by_cat[cat]["correct"] += 1
+
+    lines = ["## Per-Category Accuracy\n"]
+    lines.append(f"{'Category':<25} {'Correct':>8} {'Total':>8} {'Accuracy':>10}")
+    lines.append("-" * 55)
+    total_correct, total_all = 0, 0
+    for cat in sorted(by_cat):
+        c, t = by_cat[cat]["correct"], by_cat[cat]["total"]
+        total_correct += c
+        total_all += t
+        lines.append(f"{cat:<25} {c:>8} {t:>8} {100*c/t:>9.1f}%")
+    lines.append("-" * 55)
+    lines.append(f"{'TOTAL':<25} {total_correct:>8} {total_all:>8} {100*total_correct/total_all:>9.1f}%")
+    return "\n".join(lines)
+
+
+def _basic_stats(problems: list[Problem]) -> str:
+    n = len(problems)
+    with_answer = sum(1 for p in problems if p.answer)
+    return (
+        f"## Basic Statistics\n"
+        f"- Total problems: {n}\n"
+        f"- With answers (train): {with_answer}\n"
+        f"- Without answers (test): {n - with_answer}"
+    )
+
+
+def _category_distribution(problems: list[Problem]) -> str:
+    cats = Counter(p.category for p in problems)
+    lines = ["## Category Distribution\n"]
+    for cat, count in cats.most_common():
+        pct = 100 * count / len(problems)
+        bar = "█" * int(pct / 2)
+        lines.append(f"  {cat:<25} {count:>5} ({pct:>5.1f}%) {bar}")
+    return "\n".join(lines)
+
+
+def _answer_format_distribution(problems: list[Problem]) -> str:
+    formats = Counter()
+    for p in problems:
+        if not p.answer:
+            continue
+        a = p.answer
+        if all(c in '01' for c in a) and len(a) == 8:
+            formats['8-bit binary'] += 1
+        elif all(c in 'IVXLCDM' for c in a):
+            formats['roman numeral'] += 1
+        elif a.replace('.', '', 1).replace('-', '', 1).isdigit():
+            formats['numeric'] += 1
+        elif len(a.split()) >= 2 and a.replace(' ', '').isalpha():
+            formats['word sequence'] += 1
         else:
-            return "text/string"
+            formats['symbol/other'] += 1
+
+    lines = ["## Answer Format Distribution\n"]
+    for fmt, count in formats.most_common():
+        lines.append(f"  {fmt:<20} {count:>5}")
+    return "\n".join(lines)
+
+
+def _prompt_length_stats(problems: list[Problem]) -> str:
+    lens = sorted(len(p.prompt) for p in problems)
+    n = len(lens)
+    return (
+        f"## Prompt Length (chars)\n"
+        f"- Min: {lens[0]}, Max: {lens[-1]}\n"
+        f"- Median: {lens[n//2]}, Mean: {sum(lens)/n:.0f}"
+    )
+
+
+def _examples_per_problem(problems: list[Problem]) -> str:
+    counts = Counter(len(p.examples) for p in problems)
+    lines = ["## Examples Per Problem\n"]
+    for n_ex, count in sorted(counts.items()):
+        lines.append(f"  {n_ex} examples: {count} problems")
+    return "\n".join(lines)
+
+
+def _sample_problems(problems: list[Problem], n: int = 3) -> str:
+    lines = ["## Sample Problems\n"]
+    for p in problems[:n]:
+        lines.append(f"### {p.id} [{p.category}]")
+        lines.append(f"Prompt (first 200 chars): {p.prompt[:200]}...")
+        lines.append(f"Answer: {p.answer}")
+        lines.append(f"Parsed examples: {len(p.examples)}")
+        if p.examples:
+            lines.append(f"  First: {p.examples[0][0]} → {p.examples[0][1]}")
+        lines.append("")
+    return "\n".join(lines)

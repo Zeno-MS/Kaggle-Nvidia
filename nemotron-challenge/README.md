@@ -1,80 +1,67 @@
-# Nemotron Reasoning Challenge — Project Core
+# Nemotron Reasoning Challenge
 
-## What This Is
+NVIDIA Nemotron Model Reasoning Challenge on Kaggle.
+$106,388 prize pool. Deadline: 2026-06-15.
 
-This is the living brain of our NVIDIA Nemotron Model Reasoning Challenge entry.
-It is designed to **adapt** as we learn more about the benchmark, the judge, and
-what works. Every assumption is tracked. Every decision is logged. Every experiment
-feeds back into the strategy.
+## The Challenge
 
-## Our Thesis (One Sentence)
+Submit a **LoRA adapter** (rank <= 32) that improves Nemotron-3-Nano-30B
+accuracy on Alice's Wonderland rule-induction puzzles. Pure accuracy scoring
+-- fraction of problems answered correctly.
 
-> The competition rewards **correctness packaged in concise, coherent traces** — not
-> raw reasoning power — so the winning system solves symbolically where possible,
-> wraps solutions in judge-optimized traces, and falls back to structured neural
-> reasoning only when symbolic methods fail.
+## The Data
 
-## The Three Unconventional Edges
+9,500 train / 34 test problems across 6 balanced categories:
 
-| Edge | Core Idea | Why It's Contrarian |
-|------|-----------|---------------------|
-| **Judge Reverse-Engineering** | Nemotron's reward model penalizes verbosity (-0.40 weight) and heavily rewards correctness (+0.80). Optimize for the judge, not for "good reasoning." | Most competitors will assume longer = better, as with every other LLM judge. |
-| **Symbolic-First Solving** | Treat puzzles as program synthesis problems. Provably correct answers score highest on the dominant correctness axis. | Most competitors will throw neural reasoning at everything. |
-| **Cognitive Trace Design** | Structure traces using a specific template that maps to Nemotron's HelpSteer scoring dimensions. | Most competitors will use generic CoT prompting. |
+| Category | Count | Description |
+|----------|-------|-------------|
+| bit_manipulation | 1,602 | Multi-op transforms on 8-bit binary |
+| gravitational_constant | 1,597 | Infer g from distance/time data |
+| unit_conversion | 1,594 | Proportional conversion (y = a*x) |
+| cipher | 1,576 | Unique substitution ciphers |
+| numeral_system | 1,576 | Decimal to Roman numeral |
+| symbol_transform | 1,555 | Symbol/character equation transforms |
+
+All problems: examples of input->output, discover the rule, apply it.
+
+## Strategy
+
+1. **Profile** -- baseline Nano accuracy per category (needs GPU)
+2. **Train** -- SFT LoRA on train data with CoT + \boxed{} format
+3. **Augment** -- synthetic data for weak categories (bit_manipulation, cipher, symbol_transform)
+4. **Iterate** -- eval at temp=1.0, oversample weak areas, retrain
+
+## Key Constraints
+
+- LoRA: rank=32, alpha=16, target `in_proj|out_proj|up_proj|down_proj`
+- Eval: temperature=1.0, top_p=1.0, max_tokens=3584, enable_thinking=True
+- Answer extracted from last `\boxed{}` in model output
+- Numeric: rel_tol=1e-2. Strings: case-insensitive exact match.
 
 ## Project Structure
 
 ```
 nemotron-challenge/
-│
-├── docs/                         # Living documents (the strategy brain)
-│   ├── STRATEGY.md               # ★ Master strategy — the living plan
-│   ├── ASSUMPTIONS.md            # Every assumption, tracked and testable
-│   ├── DECISION_LOG.md           # Key decisions with rationale
-│   ├── KNOWLEDGE_BASE.md         # What we know about benchmark + judge
-│   └── COMPETITIVE_INTEL.md      # Leaderboard trends, forum insights
-│
-├── pipeline/                     # The four-stage solving pipeline
-│   ├── __init__.py
-│   ├── config.py                 # Central configuration
-│   ├── orchestrator.py           # ★ Main pipeline: symbolic → trace → judge → fallback
-│   ├── symbolic_solver.py        # Stage 1: Program synthesis / symbolic solving
-│   ├── trace_generator.py        # Stage 2: Neural trace generation around answers
-│   ├── judge_optimizer.py        # Stage 3: Judge-alignment post-processing
-│   ├── neural_fallback.py        # Stage 4: Direct neural reasoning fallback
-│   └── utils.py                  # Shared utilities
-│
-├── analysis/                     # Intelligence-gathering tools
-│   ├── benchmark_profiler.py     # Analyze puzzle structure and difficulty
-│   ├── judge_profiler.py         # Profile judge model preferences
-│   └── error_analyzer.py         # Categorize and track failure modes
-│
-├── experiments/                  # Experiment logs (auto-generated)
-│   └── EXPERIMENT_TRACKER.md     # Master experiment log
-│
-├── configs/                      # Configuration files
-│   └── default.yaml              # Default pipeline configuration
-│
-└── notebooks/                    # Exploration notebooks (Colab-compatible)
-    └── .gitkeep
+├── data/                  # Competition data (gitignored)
+├── pipeline/              # Config, data loading, answer verification
+├── analysis/              # Benchmark profiler, error analyzer
+├── docs/                  # Strategy, knowledge base, assumptions
+├── experiments/           # Experiment tracker
+├── configs/               # YAML config files
+└── _quarantine/           # Pre-pivot code (kept for reference)
 ```
 
-## How to Use This System
+## Quick Start
 
-1. **Before any work session**: Read `docs/STRATEGY.md` — it's the current plan of record
-2. **When you learn something new**: Update `docs/KNOWLEDGE_BASE.md` and check `docs/ASSUMPTIONS.md`
-3. **Before making a choice**: Check `docs/DECISION_LOG.md` for prior context
-4. **After every experiment**: Log it in `experiments/EXPERIMENT_TRACKER.md`
-5. **When strategy needs to change**: Update `docs/STRATEGY.md` and record why in the decision log
+```python
+from pipeline.utils import load_problems, verify, extract_final_answer
+from pipeline.config import Config
+from analysis.benchmark_profiler import profile
 
-## Compute Envelope
+# Profile the data
+print(profile("data/train.csv"))
 
-| Resource | Capability | Best Use |
-|----------|-----------|----------|
-| Kaggle G4 VM | RTX-class GPU, time-limited submissions | Final inference, submission testing |
-| NVIDIA Competition Compute | TBD — check competition page | Heavy inference, possible TTT |
-| Google Colab Pro | A100/T4, ~12hr sessions | Prototyping, synthetic data gen, fine-tuning |
-
-## Current Phase
-
-**Phase 0: Intelligence Gathering** — See `docs/STRATEGY.md` for details.
+# Load and inspect
+problems = load_problems("data/train.csv")
+print(f"{len(problems)} problems, categories: {set(p.category for p in problems)}")
+```

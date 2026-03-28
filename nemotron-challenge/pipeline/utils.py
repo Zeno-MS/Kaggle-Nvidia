@@ -1,138 +1,233 @@
 """
-Shared utilities for the Nemotron Challenge pipeline.
+Utilities for the Nemotron Challenge pipeline.
+
+Data loading, answer verification, timing, and experiment logging.
 """
 
-import json
 import csv
+import json
 import logging
+import math
+import re
 import time
-from pathlib import Path
-from typing import List
+from dataclasses import dataclass, field
 from functools import wraps
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DATA STRUCTURES
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass
+class Problem:
+    """A single competition problem."""
+    id: str
+    prompt: str
+    answer: Optional[str] = None  # None for test set
+    category: Optional[str] = None  # Assigned by categorize()
+    examples: list = field(default_factory=list)  # Parsed (input, output) pairs
 
 
 # ═══════════════════════════════════════════════════════════════════
 # DATA LOADING
 # ═══════════════════════════════════════════════════════════════════
 
-def load_puzzles_from_csv(csv_path: str) -> list:
+def load_problems(csv_path: str) -> list[Problem]:
     """
-    Load puzzles from the competition CSV file.
-    
-    IMPORTANT: This function's internals MUST be adapted after Phase 0
-    when you know the actual CSV format. The current implementation is
-    a best-guess skeleton.
-    
-    Returns a list of Puzzle objects (imported from orchestrator).
+    Load problems from competition CSV.
+    Format: id, prompt, [answer]
     """
-    from pipeline.orchestrator import Puzzle
-    
-    puzzles = []
-    path = Path(csv_path)
-    
-    if not path.exists():
-        raise FileNotFoundError(f"CSV not found: {csv_path}")
-    
-    with open(path, 'r') as f:
+    problems = []
+    with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
-        
         for row in reader:
-            # [PHASE 0] Adapt these column names based on actual CSV structure
-            puzzle = Puzzle(
-                puzzle_id=row.get('id', row.get('puzzle_id', str(len(puzzles)))),
-                instruction=row.get('instruction', row.get('question', row.get('prompt', ''))),
-                test_input=row.get('test_input', row.get('input', None)),
-                expected_output=row.get('expected_output', row.get('output', row.get('answer', None))),
+            p = Problem(
+                id=row['id'],
+                prompt=row['prompt'],
+                answer=row.get('answer'),
             )
-            
-            # Try to parse training examples if they exist
-            examples_raw = row.get('examples', row.get('training_examples', None))
-            if examples_raw:
-                try:
-                    puzzle.training_examples = json.loads(examples_raw)
-                except (json.JSONDecodeError, TypeError):
-                    puzzle.training_examples = []
-            
-            puzzles.append(puzzle)
-    
-    logger.info(f"Loaded {len(puzzles)} puzzles from {csv_path}")
-    return puzzles
+            p.examples = parse_examples(p.prompt)
+            p.category = categorize(p)
+            problems.append(p)
+    logger.info(f"Loaded {len(problems)} problems from {csv_path}")
+    return problems
 
 
-def save_solutions_to_csv(solutions: list, output_path: str):
+def parse_examples(prompt: str) -> list[tuple[str, str]]:
     """
-    Save solutions in the format expected by Kaggle submission.
-    
-    [PHASE 0] Adapt based on actual submission format requirements.
+    Extract input→output example pairs embedded in the prompt text.
+
+    All problems follow the pattern:
+        description → example lines → query
+
+    Example lines look like:
+        01010001 -> 11011101
+        vsa botjah -> the silver queen
+        61"88 = 27
     """
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        # [PHASE 0] Adapt header based on actual submission format
-        writer.writerow(['id', 'answer'])
-        
-        for solution in solutions:
-            writer.writerow([
-                solution.puzzle_id,
-                solution.format_for_submission()
-            ])
-    
-    logger.info(f"Saved {len(solutions)} solutions to {output_path}")
+    examples = []
+    # Match "X -> Y" or "X → Y" patterns (bit_manipulation, cipher)
+    for match in re.finditer(r'^(.+?)\s*(?:->|→)\s*(.+)$', prompt, re.MULTILINE):
+        inp, out = match.group(1).strip(), match.group(2).strip()
+        if len(inp) > 100 or len(out) > 100:
+            continue
+        # Skip description lines like "Here are some examples of input → output:"
+        if any(w in inp.lower() for w in ['example', 'here are', 'input']):
+            continue
+        examples.append((inp, out))
+
+    # "X becomes Y" pattern (unit_conversion)
+    if not examples:
+        for match in re.finditer(r'^(.+?)\s+becomes\s+(.+)$', prompt, re.MULTILINE):
+            inp, out = match.group(1).strip(), match.group(2).strip()
+            if len(inp) > 80 or len(out) > 80:
+                continue
+            examples.append((inp, out))
+
+    # "For t = Xs, distance = Y m" pattern (gravitational_constant)
+    if not examples:
+        for match in re.finditer(
+            r'For t\s*=\s*([\d.]+)\s*s,\s*distance\s*=\s*([\d.]+)\s*m',
+            prompt
+        ):
+            examples.append((match.group(1), match.group(2)))
+
+    # "X = Y" format (symbol_transform equations)
+    if not examples:
+        for match in re.finditer(r'^([^\n=]+?)\s*=\s*([^\n]+)$', prompt, re.MULTILINE):
+            inp, out = match.group(1).strip(), match.group(2).strip()
+            if len(inp) > 60 or len(out) > 60:
+                continue
+            if any(w in inp.lower() for w in ['the', 'for', 'here', 'where']):
+                continue
+            examples.append((inp, out))
+
+    return examples
+
+
+def categorize(problem: Problem) -> str:
+    """Assign a category based on prompt content."""
+    p = problem.prompt.lower()
+    if 'bit manipulation' in p:
+        return 'bit_manipulation'
+    elif 'gravitational constant' in p:
+        return 'gravitational_constant'
+    elif 'encryption' in p or 'cipher' in p or 'secret encryption' in p:
+        return 'cipher'
+    elif 'numeral system' in p or 'roman numeral' in p:
+        return 'numeral_system'
+    elif 'unit' in p and ('conversion' in p or 'convert' in p):
+        return 'unit_conversion'
+    elif 'transformation rules' in p and ('=' in p or 'equation' in p):
+        return 'symbol_transform'
+
+    # Fallback: check answer format if available
+    if problem.answer:
+        a = problem.answer
+        if all(c in '01' for c in a) and len(a) == 8:
+            return 'bit_manipulation'
+        if all(c in 'IVXLCDM' for c in a):
+            return 'numeral_system'
+        try:
+            float(a)
+            return 'numeric_unknown'
+        except ValueError:
+            pass
+    return 'unknown'
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TIMING AND PROFILING
+# ANSWER VERIFICATION (replicates competition metric)
+# ═══════════════════════════════════════════════════════════════════
+
+def extract_final_answer(text: str) -> Optional[str]:
+    """
+    Extract answer from model output. Replicates metric's extraction logic:
+    1. Last \\boxed{} content
+    2. "Final answer is:" pattern
+    3. Last number in text
+    """
+    # Strategy 1: Last \boxed{}
+    boxed = re.findall(r'\\boxed\{([^}]*)\}', text)
+    if boxed:
+        return boxed[-1].strip()
+
+    # Strategy 2: "Final answer is:" pattern
+    match = re.search(r'(?i)final\s+answer\s+is[:\s]+(.+?)(?:\.|$)', text)
+    if match:
+        return match.group(1).strip()
+
+    # Strategy 3: Last number
+    numbers = re.findall(r'-?\d+\.?\d*', text)
+    if numbers:
+        return numbers[-1]
+
+    return None
+
+
+def verify(expected: str, predicted: str) -> bool:
+    """
+    Check if predicted answer matches expected.
+    Replicates competition metric's verify() function.
+    """
+    if predicted is None:
+        return False
+
+    expected = str(expected).strip()
+    predicted = str(predicted).strip()
+
+    # Try numeric comparison first
+    try:
+        exp_num = float(expected)
+        pred_num = float(predicted)
+        return math.isclose(exp_num, pred_num, rel_tol=1e-2, abs_tol=1e-5)
+    except (ValueError, TypeError):
+        pass
+
+    # String comparison: case-insensitive
+    return expected.lower() == predicted.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TIMING
 # ═══════════════════════════════════════════════════════════════════
 
 def timed(func):
-    """Decorator that logs execution time of a function."""
+    """Decorator that logs execution time."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         start = time.time()
         result = func(*args, **kwargs)
-        elapsed = time.time() - start
-        logger.debug(f"{func.__name__} took {elapsed:.2f}s")
+        logger.debug(f"{func.__name__} took {time.time() - start:.2f}s")
         return result
     return wrapper
 
 
 class TimeBudget:
-    """
-    Context manager for tracking time budget consumption.
-    
-    Usage:
-        budget = TimeBudget(total_seconds=60)
-        with budget.track("symbolic_solving"):
-            ...
-        print(budget.remaining)  # seconds left
-        print(budget.breakdown)  # where time was spent
-    """
-    
+    """Track time budget consumption across labeled sections."""
+
     def __init__(self, total_seconds: float):
         self.total = total_seconds
         self.start_time = time.time()
         self.breakdown = {}
-        self._current_label = None
-        self._current_start = None
-    
+
     @property
     def elapsed(self) -> float:
         return time.time() - self.start_time
-    
+
     @property
     def remaining(self) -> float:
         return max(0, self.total - self.elapsed)
-    
+
     @property
     def exhausted(self) -> bool:
         return self.remaining <= 0
-    
+
     def track(self, label: str):
-        """Return a context manager that tracks time for a labeled section."""
         return _TimeBudgetSection(self, label)
 
 
@@ -140,11 +235,11 @@ class _TimeBudgetSection:
     def __init__(self, budget: TimeBudget, label: str):
         self.budget = budget
         self.label = label
-    
+
     def __enter__(self):
         self.start = time.time()
         return self
-    
+
     def __exit__(self, *args):
         elapsed = time.time() - self.start
         self.budget.breakdown[self.label] = (
@@ -153,46 +248,30 @@ class _TimeBudgetSection:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# LOGGING SETUP
+# LOGGING
 # ═══════════════════════════════════════════════════════════════════
 
 def setup_logging(level: str = "INFO", log_file: str = None):
     """Configure logging for the pipeline."""
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     handlers = [logging.StreamHandler()]
-    
     if log_file:
         handlers.append(logging.FileHandler(log_file))
-    
     logging.basicConfig(
         level=getattr(logging, level.upper()),
-        format=fmt,
-        handlers=handlers
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
     )
 
-
-# ═══════════════════════════════════════════════════════════════════
-# EXPERIMENT TRACKING HELPERS
-# ═══════════════════════════════════════════════════════════════════
 
 def log_experiment(
     experiment_id: str,
     hypothesis: str,
     results: dict,
-    tracker_path: str = "experiments/EXPERIMENT_TRACKER.md"
+    tracker_path: str = "experiments/EXPERIMENT_TRACKER.md",
 ):
-    """
-    Append an experiment record to the tracker markdown file.
-    
-    Usage:
-        log_experiment(
-            experiment_id="EXP-001",
-            hypothesis="Longer traces score lower",
-            results={"short_score": 0.72, "long_score": 0.65}
-        )
-    """
+    """Append an experiment record to the tracker."""
     from datetime import datetime
-    
+
     entry = f"""
 ### {experiment_id}: Auto-logged experiment
 **Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -202,11 +281,8 @@ def log_experiment(
 
 ---
 """
-    
     path = Path(tracker_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    
     with open(path, 'a') as f:
         f.write(entry)
-    
     logger.info(f"Logged experiment {experiment_id}")

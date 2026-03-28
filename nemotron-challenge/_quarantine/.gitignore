@@ -1,0 +1,4 @@
+# Ignore everything in this quarantine folder — deprecated pre-pivot code.
+# Only the .gitignore itself is tracked so the ignore rule persists.
+*
+!.gitignore

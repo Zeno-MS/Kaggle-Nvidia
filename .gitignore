@@ -1,6 +1,7 @@
 # Data (competition data should not be in repo per Kaggle terms)
 nemotron-challenge/data/*.csv
 nemotron-challenge/data/*.zip
+nemotron-challenge/data/*.jsonl
 
 # Python
 __pycache__/
