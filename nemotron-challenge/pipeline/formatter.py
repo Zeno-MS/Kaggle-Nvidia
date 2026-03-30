@@ -219,6 +219,7 @@ def _build_cipher_map(examples: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def _apply_cipher(mapping: dict, text: str) -> str:
+    """Apply a char→char cipher mapping to text. Unmapped alpha chars become '?'."""
     return "".join(mapping.get(c, "?" if c.isalpha() else c) for c in text)
 
 

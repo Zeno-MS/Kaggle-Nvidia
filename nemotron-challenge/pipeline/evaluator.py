@@ -111,15 +111,6 @@ class Evaluator:
         """Build the exact prompt the competition metric uses."""
         return problem.prompt + BOXED_INSTRUCTION
 
-    def _apply_chat_template(self, prompt: str) -> str:
-        """
-        Apply Nemotron's chat template with enable_thinking=True.
-        The tokenizer handles this — this is a convenience wrapper.
-        """
-        # In practice, call tokenizer.apply_chat_template()
-        # This is done inside the vLLM sampling call via chat=True or prompt formatting
-        return prompt
-
     def run(
         self,
         problems: list[Problem],

@@ -38,30 +38,51 @@ All problems: examples of input->output, discover the rule, apply it.
 - Answer extracted from last `\boxed{}` in model output
 - Numeric: rel_tol=1e-2. Strings: case-insensitive exact match.
 
+## Workflow
+
+**Two notebooks, two platforms:**
+
+### 1. Train on Colab (`notebooks/train_lora.ipynb`)
+- Runtime: A100 + High RAM (80GB)
+- Model downloaded via `kagglehub` (no manual download needed)
+- Supports bf16 LoRA (default) or QLoRA 4-bit fallback
+- Adapter saved to Google Drive for persistence
+
+### 2. Submit on Kaggle (`notebooks/submit.ipynb`)
+- Upload trained adapter as a private Kaggle Dataset
+- Attach to notebook, run → produces `submission.zip`
+- Identity LoRA cell included for pipeline validation (no training needed)
+
+### Step-by-step
+1. Open `train_lora.ipynb` in Colab, set runtime to A100 + High RAM
+2. Add Kaggle API token as Colab Secret (`KAGGLE_API_TOKEN`)
+3. Run all cells — trains LoRA, downloads `adapter.zip`
+4. Upload `adapter.zip` as a private Kaggle Dataset
+5. Open `submit.ipynb` on Kaggle, attach dataset, run → submit
+
 ## Project Structure
 
 ```
 nemotron-challenge/
+├── notebooks/
+│   ├── train_lora.ipynb   # Training notebook (Colab A100)
+│   └── submit.ipynb       # Submission notebook (Kaggle)
 ├── data/                  # Competition data (gitignored)
-├── pipeline/              # Config, data loading, answer verification
+├── pipeline/              # Config, evaluator, formatter, utils
 ├── analysis/              # Benchmark profiler, error analyzer
+├── scripts/               # GPT-4.1 cipher CoT generator
 ├── docs/                  # Strategy, knowledge base, assumptions
 ├── experiments/           # Experiment tracker
 ├── configs/               # YAML config files
 └── _quarantine/           # Pre-pivot code (kept for reference)
 ```
 
-## Quick Start
+## Quick Start (local — no GPU needed)
 
 ```python
 from pipeline.utils import load_problems, verify, extract_final_answer
 from pipeline.config import Config
-from analysis.benchmark_profiler import profile
 
-# Profile the data
-print(profile("data/train.csv"))
-
-# Load and inspect
 problems = load_problems("data/train.csv")
 print(f"{len(problems)} problems, categories: {set(p.category for p in problems)}")
 ```

@@ -144,22 +144,31 @@ def categorize(problem: Problem) -> str:
 # ANSWER VERIFICATION (replicates competition metric)
 # ═══════════════════════════════════════════════════════════════════
 
-def extract_final_answer(text: str) -> Optional[str]:
+def extract_final_answer(text: Optional[str]) -> Optional[str]:
     """
     Extract answer from model output. Replicates metric's extraction logic:
     1. Last \\boxed{} content
-    2. "Final answer is:" pattern
+    2. "Final answer is:" pattern (matches to end of line, per metric source)
     3. Last number in text
     """
+    if text is None:
+        return None
+
     # Strategy 1: Last \boxed{}
     boxed = re.findall(r'\\boxed\{([^}]*)\}', text)
     if boxed:
         return boxed[-1].strip()
 
-    # Strategy 2: "Final answer is:" pattern
-    match = re.search(r'(?i)final\s+answer\s+is[:\s]+(.+?)(?:\.|$)', text)
-    if match:
-        return match.group(1).strip()
+    # Strategy 2: "Final answer is:" — match to end of line (per competition metric)
+    for pattern in [
+        r'The final answer is:\s*([^\n]+)',
+        r'Final answer is:\s*([^\n]+)',
+        r'Final answer\s*[:]\s*([^\n]+)',
+        r'final answer\s*[:]\s*([^\n]+)',
+    ]:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()
 
     # Strategy 3: Last number
     numbers = re.findall(r'-?\d+\.?\d*', text)
