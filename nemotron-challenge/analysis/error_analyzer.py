@@ -13,7 +13,7 @@ Usage:
 """
 
 import logging
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pipeline.utils import Problem, verify
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,13 @@ class ErrorAnalyzer:
     """Categorizes prediction errors to guide training data improvements."""
 
     def __init__(self, problems: list[Problem]):
-        self.problems = {p.id: p for p in problems if p.answer}
+        self.problems = {}
+        for p in problems:
+            if not p.answer:
+                continue
+            if p.id in self.problems:
+                logger.warning(f"Duplicate problem ID {p.id} — later entry overwrites earlier")
+            self.problems[p.id] = p
         self.results = {}  # problem_id -> (correct: bool, predicted: str)
 
     def evaluate(self, predictions: dict[str, str]):

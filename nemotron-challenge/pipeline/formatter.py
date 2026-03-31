@@ -22,12 +22,9 @@ import random
 from pathlib import Path
 from typing import Optional
 
-from pipeline.utils import Problem
+from pipeline.utils import Problem, BOXED_INSTRUCTION
 
 logger = logging.getLogger(__name__)
-
-# Metric appends this to every prompt during evaluation — we match it exactly
-BOXED_INSTRUCTION = "\nPlease put your final answer inside \\boxed{}. For example: \\boxed{your answer}"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -57,6 +54,7 @@ def _cot_numeral(problem: Problem) -> tuple[str, str]:
         # Fallback: last number in prompt
         nums = re.findall(r'\b(\d+)\b', problem.prompt)
         if not nums:
+            logger.debug(f"[{problem.id}] numeral: no number found in prompt, falling back to template")
             return _cot_template(problem)
         n_str = nums[-1]
     else:
@@ -66,6 +64,7 @@ def _cot_numeral(problem: Problem) -> tuple[str, str]:
         n = int(n_str)
         roman = int_to_roman(n)
     except (ValueError, TypeError):
+        logger.debug(f"[{problem.id}] numeral: could not parse '{n_str}' as int, falling back to template")
         return _cot_template(problem)
 
     # Build step-by-step breakdown
@@ -95,6 +94,7 @@ def _cot_numeral(problem: Problem) -> tuple[str, str]:
 def _cot_gravity(problem: Problem) -> tuple[str, str]:
     """Returns (cot_trace, solved_answer). Formula: d = 0.5 * g * t²"""
     if not problem.examples:
+        logger.debug(f"[{problem.id}] gravity: no examples, falling back to template")
         return _cot_template(problem)
 
     # Fit g from examples: g = 2d/t²
@@ -104,9 +104,11 @@ def _cot_gravity(problem: Problem) -> tuple[str, str]:
             t, d = float(t_str), float(d_str)
             g_estimates.append(2 * d / (t ** 2))
         except (ValueError, ZeroDivisionError):
+            logger.debug(f"[{problem.id}] gravity: skipping bad example t={t_str}, d={d_str}")
             continue
 
     if not g_estimates:
+        logger.debug(f"[{problem.id}] gravity: no valid g estimates, falling back to template")
         return _cot_template(problem)
 
     g = sum(g_estimates) / len(g_estimates)
@@ -117,6 +119,7 @@ def _cot_gravity(problem: Problem) -> tuple[str, str]:
         # Try last float before end
         floats = re.findall(r'[\d.]+', problem.prompt.split("Now,")[-1])
         if not floats:
+            logger.debug(f"[{problem.id}] gravity: no query t found, falling back to template")
             return _cot_template(problem)
         t_query = float(floats[0])
     else:
@@ -154,6 +157,7 @@ def _cot_gravity(problem: Problem) -> tuple[str, str]:
 def _cot_unit(problem: Problem) -> tuple[str, str]:
     """Returns (cot_trace, solved_answer). Formula: output = ratio × input"""
     if not problem.examples:
+        logger.debug(f"[{problem.id}] unit: no examples, falling back to template")
         return _cot_template(problem)
 
     ratios = []
@@ -163,9 +167,11 @@ def _cot_unit(problem: Problem) -> tuple[str, str]:
             out_val = float(out_str.strip())
             ratios.append(out_val / inp_val)
         except (ValueError, ZeroDivisionError, IndexError):
+            logger.debug(f"[{problem.id}] unit: skipping bad example in={inp_str}, out={out_str}")
             continue
 
     if not ratios:
+        logger.debug(f"[{problem.id}] unit: no valid ratios, falling back to template")
         return _cot_template(problem)
 
     ratio = sum(ratios) / len(ratios)
@@ -174,6 +180,7 @@ def _cot_unit(problem: Problem) -> tuple[str, str]:
     query_part = problem.prompt.split("Now,")[-1]
     val_match = re.search(r'([\d.]+)', query_part)
     if not val_match:
+        logger.debug(f"[{problem.id}] unit: no query value found, falling back to template")
         return _cot_template(problem)
 
     x_query = float(val_match.group(1))
@@ -226,6 +233,7 @@ def _apply_cipher(mapping: dict, text: str) -> str:
 def _cot_cipher(problem: Problem) -> tuple[str, str]:
     """Returns (cot_trace, solved_answer)."""
     if not problem.examples:
+        logger.debug(f"[{problem.id}] cipher: no examples, falling back to template")
         return _cot_template(problem)
 
     mapping = _build_cipher_map(problem.examples)
@@ -240,6 +248,7 @@ def _cot_cipher(problem: Problem) -> tuple[str, str]:
         query = decrypt_match.group(1).strip()
 
     if not query:
+        logger.debug(f"[{problem.id}] cipher: no query text found, falling back to template")
         return _cot_template(problem)
 
     decoded = _apply_cipher(mapping, query)

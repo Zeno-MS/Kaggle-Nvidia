@@ -13,8 +13,9 @@ Components:
 """
 
 from pipeline.config import Config
+from pipeline.utils import BOXED_INSTRUCTION
 from pipeline.formatter import ProblemFormatter
 from pipeline.evaluator import Evaluator, stratified_sample
 
-__version__ = "0.3.0"
-__all__ = ["Config", "ProblemFormatter", "Evaluator", "stratified_sample"]
+__version__ = "0.4.0"
+__all__ = ["Config", "BOXED_INSTRUCTION", "ProblemFormatter", "Evaluator", "stratified_sample"]

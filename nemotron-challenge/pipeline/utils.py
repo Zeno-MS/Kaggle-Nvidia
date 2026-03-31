@@ -11,11 +11,16 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Metric appends this to every prompt during evaluation — we match it exactly.
+# Shared constant: used by formatter.py and evaluator.py.
+BOXED_INSTRUCTION = "\nPlease put your final answer inside \\boxed{}. For example: \\boxed{your answer}"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -74,9 +79,11 @@ def parse_examples(prompt: str) -> list[tuple[str, str]]:
     for match in re.finditer(r'^(.+?)\s*(?:->|→)\s*(.+)$', prompt, re.MULTILINE):
         inp, out = match.group(1).strip(), match.group(2).strip()
         if len(inp) > 100 or len(out) > 100:
+            logger.debug("Skipping arrow example: input or output exceeds 100 chars")
             continue
         # Skip description lines like "Here are some examples of input → output:"
         if any(w in inp.lower() for w in ['example', 'here are', 'input']):
+            logger.debug(f"Skipping description line: {inp[:60]}")
             continue
         examples.append((inp, out))
 
@@ -85,6 +92,7 @@ def parse_examples(prompt: str) -> list[tuple[str, str]]:
         for match in re.finditer(r'^(.+?)\s+becomes\s+(.+)$', prompt, re.MULTILINE):
             inp, out = match.group(1).strip(), match.group(2).strip()
             if len(inp) > 80 or len(out) > 80:
+                logger.debug("Skipping 'becomes' example: input or output exceeds 80 chars")
                 continue
             examples.append((inp, out))
 
@@ -101,8 +109,10 @@ def parse_examples(prompt: str) -> list[tuple[str, str]]:
         for match in re.finditer(r'^([^\n=]+?)\s*=\s*([^\n]+)$', prompt, re.MULTILINE):
             inp, out = match.group(1).strip(), match.group(2).strip()
             if len(inp) > 60 or len(out) > 60:
+                logger.debug("Skipping equals example: input or output exceeds 60 chars")
                 continue
             if any(w in inp.lower() for w in ['the', 'for', 'here', 'where']):
+                logger.debug(f"Skipping prose line in equals format: {inp[:60]}")
                 continue
             examples.append((inp, out))
 
@@ -125,18 +135,22 @@ def categorize(problem: Problem) -> str:
     elif 'transformation rules' in p and ('=' in p or 'equation' in p):
         return 'symbol_transform'
 
-    # Fallback: check answer format if available
+    # Fallback: infer from answer format if keyword matching failed
     if problem.answer:
         a = problem.answer
         if all(c in '01' for c in a) and len(a) == 8:
+            logger.debug(f"Categorized {problem.id} as bit_manipulation via answer format fallback")
             return 'bit_manipulation'
         if all(c in 'IVXLCDM' for c in a):
+            logger.debug(f"Categorized {problem.id} as numeral_system via answer format fallback")
             return 'numeral_system'
         try:
             float(a)
+            logger.debug(f"Categorized {problem.id} as numeric_unknown via answer format fallback")
             return 'numeric_unknown'
         except ValueError:
             pass
+    logger.debug(f"Could not categorize {problem.id} — assigned 'unknown'")
     return 'unknown'
 
 
@@ -189,7 +203,8 @@ def verify(expected: str, predicted: str) -> bool:
     expected = str(expected).strip()
     predicted = str(predicted).strip()
 
-    # Try numeric comparison first
+    # Numeric comparison — tolerances replicate competition metric exactly
+    # (see Config.eval.numeric_rel_tol / numeric_abs_tol for documentation)
     try:
         exp_num = float(expected)
         pred_num = float(predicted)
@@ -279,7 +294,6 @@ def log_experiment(
     tracker_path: str = "experiments/EXPERIMENT_TRACKER.md",
 ):
     """Append an experiment record to the tracker."""
-    from datetime import datetime
 
     entry = f"""
 ### {experiment_id}: Auto-logged experiment

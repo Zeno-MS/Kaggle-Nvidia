@@ -64,7 +64,8 @@ def category_accuracy(problems: list[Problem], predictions: dict[str, str]) -> s
         total_all += t
         lines.append(f"{cat:<25} {c:>8} {t:>8} {100*c/t:>9.1f}%")
     lines.append("-" * 55)
-    lines.append(f"{'TOTAL':<25} {total_correct:>8} {total_all:>8} {100*total_correct/total_all:>9.1f}%")
+    total_acc = 100 * total_correct / total_all if total_all > 0 else 0.0
+    lines.append(f"{'TOTAL':<25} {total_correct:>8} {total_all:>8} {total_acc:>9.1f}%")
     return "\n".join(lines)
 
 
@@ -83,7 +84,8 @@ def _category_distribution(problems: list[Problem]) -> str:
     cats = Counter(p.category for p in problems)
     lines = ["## Category Distribution\n"]
     for cat, count in cats.most_common():
-        pct = 100 * count / len(problems)
+        pct = 100 * count / len(problems) if problems else 0.0
+        # Each █ represents ~2 percentage points for a compact visual bar
         bar = "█" * int(pct / 2)
         lines.append(f"  {cat:<25} {count:>5} ({pct:>5.1f}%) {bar}")
     return "\n".join(lines)

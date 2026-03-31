@@ -26,14 +26,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from pipeline.utils import Problem, extract_final_answer, verify
+from pipeline.utils import Problem, BOXED_INSTRUCTION, extract_final_answer, verify
 
 logger = logging.getLogger(__name__)
 
-# Exactly matches competition metric
-BOXED_INSTRUCTION = "\nPlease put your final answer inside \\boxed{}. For example: \\boxed{your answer}"
-
-# Competition eval parameters — [VERIFIED] from metric source code
+# Competition eval parameters — [VERIFIED] from metric source code.
+# These mirror Config.eval defaults but are kept as module constants so the
+# evaluator works without instantiating Config (e.g. in Colab notebooks).
 EVAL_TEMPERATURE = 1.0
 EVAL_TOP_P = 1.0
 EVAL_MAX_TOKENS = 3584
@@ -104,7 +103,11 @@ class Evaluator:
         else:
             logger.info(f"Loading base model (no LoRA): {self.model_path}")
 
-        self._llm = LLM(**kwargs)
+        try:
+            self._llm = LLM(**kwargs)
+        except Exception as e:
+            logger.error(f"Failed to load model from {self.model_path}: {e}")
+            raise
         logger.info("Model loaded.")
 
     def _build_prompt(self, problem: Problem) -> str:

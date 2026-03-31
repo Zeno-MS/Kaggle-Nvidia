@@ -10,9 +10,14 @@ Usage:
     cfg.load_yaml("configs/default.yaml")
 """
 
+import dataclasses
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,14 +104,18 @@ class Config:
     data: DataConfig = field(default_factory=DataConfig)
     local_eval: LocalEvalConfig = field(default_factory=LocalEvalConfig)
 
-    def load_yaml(self, path: str):
+    def load_yaml(self, path: str) -> None:
         """Override defaults from a YAML config file."""
-        with open(path, 'r') as f:
-            overrides = yaml.safe_load(f)
+        try:
+            with open(path, 'r') as f:
+                overrides = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.error(f"Config file not found: {path}")
+            raise
         if overrides:
             self._apply_overrides(overrides)
 
-    def _apply_overrides(self, overrides: dict):
+    def _apply_overrides(self, overrides: dict) -> None:
         """Recursively apply overrides from a nested dict."""
         for key, value in overrides.items():
             if isinstance(value, dict):
@@ -118,9 +127,8 @@ class Config:
             elif hasattr(self, key):
                 setattr(self, key, value)
 
-    def save_yaml(self, path: str):
+    def save_yaml(self, path: str) -> None:
         """Save current configuration to YAML for reproducibility."""
-        import dataclasses
         config_dict = {}
         for fi in dataclasses.fields(self):
             sub = getattr(self, fi.name)
